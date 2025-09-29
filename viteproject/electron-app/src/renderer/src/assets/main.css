@@ -38,10 +38,13 @@ code {
 .logo {
   margin-bottom: 20px;
   -webkit-user-drag: none;
-  height: 128px;
-  width: 128px;
+  height: auto;
+  width: 500px;
   will-change: filter;
   transition: filter 300ms;
+  margin-bottom: 1px; 
+  object-fit: contain;   /* ensures the image scales correctly */
+  object-position: center top;
 }
 
 .logo:hover {
@@ -74,7 +77,7 @@ code {
 }
 
 .react {
-  background: -webkit-linear-gradient(315deg, #087ea4 55%, #7c93ee);
+  background: -webkit-linear-gradient(318deg,#719deeaa,#3e7df1 55%, #9d7ee1, #de65caaa, #f69fd0);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;

@@ -1,5 +1,5 @@
 import Versions from './components/Versions'
-import electronLogo from './assets/electron.svg'
+import electronLogo from './assets/WS.png'
 
 function App() {
   const ipcHandle = () => window.electron.ipcRenderer.send('ping')
@@ -7,12 +7,11 @@ function App() {
   return (
     <>
       <img alt="logo" className="logo" src={electronLogo} />
-      <div className="creator">Powered by electron-vite</div>
       <div className="text">
-        Build an Electron app with <span className="react">React</span>
+        Digital signatures, simplified <span className="react">with ease</span>
       </div>
       <p className="tip">
-        Please try pressing <code>F12</code> to open the devTool
+        Seamless <code>e-signatures </code> built on trust!” 
       </p>
       <div className="actions">
         <div className="action">
