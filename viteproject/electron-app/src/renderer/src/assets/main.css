@@ -2,20 +2,17 @@
 @import './base.css';
 
 body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background-image: url('./wavy-lines.svg');
-  background-size: cover;
+  overflow: auto;
+  background: var(--color-background);
   user-select: none;
+  margin: 0;
+  padding: 0;
 }
 
 code {
   font-weight: 600;
   padding: 3px 5px;
   border-radius: 2px;
-  background-color: var(--color-background-mute);
   font-family:
     ui-monospace,
     SFMono-Regular,
@@ -28,11 +25,10 @@ code {
 }
 
 #root {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  margin-bottom: 80px;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
 }
 
 .logo {
@@ -121,8 +117,6 @@ code {
 }
 
 .versions {
-  position: absolute;
-  bottom: 30px;
   margin: 0 auto;
   padding: 15px 0;
   font-family: 'Menlo', 'Lucida Console', monospace;

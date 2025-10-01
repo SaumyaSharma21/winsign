@@ -1,5 +1,7 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
-import { join } from 'path'
+import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { basename, extname, join } from 'path'
+import { promises as fs } from 'fs'
+import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
@@ -8,6 +10,8 @@ function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
+    minWidth: 900,
+    minHeight: 630,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -51,6 +55,54 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+
+  ipcMain.handle('documents:open', async () => {
+    try {
+      const result = await dialog.showOpenDialog({
+        title: 'Select documents',
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+          { name: 'Supported documents', extensions: ['pdf', 'docx', 'txt'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      })
+
+      if (result.canceled || !result.filePaths.length) {
+        return { canceled: true, files: [] }
+      }
+
+      const files = await Promise.all(
+        result.filePaths.map(async (filePath) => {
+          const stats = await fs.stat(filePath)
+          const extension = extname(filePath).replace('.', '').toLowerCase()
+
+          return {
+            id: randomUUID(),
+            name: basename(filePath),
+            path: filePath,
+            size: stats.size,
+            lastModified: stats.mtimeMs,
+            extension
+          }
+        })
+      )
+
+      return { canceled: false, files }
+    } catch (error) {
+      console.error('[documents:open] failed', error)
+      return { canceled: true, files: [], error: error.message }
+    }
+  })
+
+  ipcMain.handle('documents:read', async (_event, filePath) => {
+    try {
+      const buffer = await fs.readFile(filePath)
+      return buffer
+    } catch (error) {
+      console.error('[documents:read] failed', error)
+      throw error
+    }
+  })
 
   createWindow()
 

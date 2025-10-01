@@ -1,32 +1,55 @@
-import Versions from './components/Versions'
-import electronLogo from './assets/WS.png'
+import { useState } from 'react'
+import Login from './components/Login'
+import SignUp from './components/SignUp'
+import Dashboard from './components/Dashboard'
+import LandingPage from './components/LandingPage'
 
 function App() {
-  const ipcHandle = () => window.electron.ipcRenderer.send('ping')
+  const [currentView, setCurrentView] = useState('landing') // 'landing', 'login', 'signup', 'dashboard'
+
+  const handleLogin = () => {
+    setCurrentView('dashboard')
+  }
+
+  const handleSignUp = () => {
+    setCurrentView('dashboard')
+  }
+
+  const handleBackToLanding = () => {
+    setCurrentView('landing')
+  }
+
+  const handleShowLogin = () => {
+    setCurrentView('login')
+  }
+
+  const handleShowSignUp = () => {
+    setCurrentView('signup')
+  }
+
+  const handleTryDashboard = () => {
+    setCurrentView('dashboard')
+  }
+
+  // Render different views based on current state
+  if (currentView === 'dashboard') {
+    return <Dashboard onBack={handleBackToLanding} />
+  }
+
+  if (currentView === 'login') {
+    return <Login onLogin={handleLogin} onBack={handleBackToLanding} />
+  }
+
+  if (currentView === 'signup') {
+    return <SignUp onSignUp={handleSignUp} onBack={handleBackToLanding} />
+  }
 
   return (
-    <>
-      <img alt="logo" className="logo" src={electronLogo} />
-      <div className="text">
-        Digital signatures, simplified <span className="react">with ease</span>
-      </div>
-      <p className="tip">
-        Seamless <code>e-signatures </code> built on trust!” 
-      </p>
-      <div className="actions">
-        <div className="action">
-          <a href="https://electron-vite.org/" target="_blank" rel="noreferrer">
-            Documentation
-          </a>
-        </div>
-        <div className="action">
-          <a target="_blank" rel="noreferrer" onClick={ipcHandle}>
-            Send IPC
-          </a>
-        </div>
-      </div>
-      <Versions></Versions>
-    </>
+    <LandingPage
+      onLogin={handleShowLogin}
+      onSignUp={handleShowSignUp}
+      onTryDashboard={handleTryDashboard}
+    />
   )
 }
 
