@@ -10,9 +10,10 @@ function PdfPreview({ file, onClose }) {
   const scrollContainerRef = useRef(null)
   const canvasRefs = useRef([])
   const pdfInstanceRef = useRef(null)
+  const renderTokenRef = useRef(0)
   const [pdf, setPdf] = useState(null)
   const [pageCount, setPageCount] = useState(0)
-  const [scale, setScale] = useState(1.25)
+  const [scale, setScale] = useState(MIN_SCALE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -62,7 +63,7 @@ function PdfPreview({ file, onClose }) {
         canvasRefs.current = []
         setPdf(pdfDoc)
         setPageCount(pdfDoc.numPages)
-        setScale(1.25)
+        setScale(MIN_SCALE)
         if (scrollContainerRef.current) {
           scrollContainerRef.current.scrollTop = 0
         }
@@ -89,17 +90,20 @@ function PdfPreview({ file, onClose }) {
   useEffect(() => {
     if (!pdf || !pageCount) return undefined
 
-    let cancelled = false
+    const token = renderTokenRef.current + 1
+    renderTokenRef.current = token
 
     const renderAllPages = async () => {
+      const devicePixelRatio = window.devicePixelRatio || 1
+
       for (let index = 1; index <= pageCount; index += 1) {
-        if (cancelled) break
+        if (renderTokenRef.current !== token) break
 
         const canvas = canvasRefs.current[index - 1]
         if (!canvas) continue
 
         const page = await pdf.getPage(index)
-        if (cancelled) {
+        if (renderTokenRef.current !== token) {
           page.cleanup()
           break
         }
@@ -107,29 +111,48 @@ function PdfPreview({ file, onClose }) {
         const viewport = page.getViewport({ scale })
         const context = canvas.getContext('2d')
 
-        canvas.width = viewport.width
-        canvas.height = viewport.height
+        const outputScale = devicePixelRatio
+        const displayWidth = viewport.width
+        const displayHeight = viewport.height
+        const scaledWidth = Math.floor(displayWidth * outputScale)
+        const scaledHeight = Math.floor(displayHeight * outputScale)
+
+        canvas.style.width = `${displayWidth}px`
+        canvas.style.height = `${displayHeight}px`
+
+        if (canvas.width !== scaledWidth || canvas.height !== scaledHeight) {
+          canvas.width = scaledWidth
+          canvas.height = scaledHeight
+        }
+
+        const renderContext = {
+          canvasContext: context,
+          viewport,
+          transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined
+        }
+
+        context.setTransform(1, 0, 0, 1, 0, 0)
         context.clearRect(0, 0, canvas.width, canvas.height)
 
-        await page.render({ canvasContext: context, viewport }).promise
+        await page.render(renderContext).promise
         page.cleanup()
       }
     }
 
     renderAllPages().catch((err) => {
       console.error('Failed to render pages', err)
-      if (!cancelled) {
+      if (renderTokenRef.current === token) {
         setError('Unable to render pages')
       }
     })
 
     return () => {
-      cancelled = true
+      renderTokenRef.current += 1
     }
   }, [pdf, pageCount, scale])
 
   return (
-    <div className="pointer-events-auto flex h-full w-full flex-col">
+    <div className="pointer-events-auto flex h-full max-h-[calc(100vh-6rem)] min-h-0 w-full flex-col">
       <div className="flex flex-none items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-900/80 px-6 py-4">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Preview</p>
@@ -167,7 +190,8 @@ function PdfPreview({ file, onClose }) {
           Close
         </button>
       </div>
-      <div className="relative flex flex-1 flex-col bg-slate-950/80">
+
+      <div className="relative flex flex-1 min-h-0 flex-col bg-slate-950/80">
         {!file && (
           <p className="flex flex-1 items-center justify-center text-sm text-slate-500">
             Choose a document to preview.
@@ -191,15 +215,15 @@ function PdfPreview({ file, onClose }) {
         )}
 
         {file && isPdf && !loading && !error && pageCount > 0 && (
-          <div ref={scrollContainerRef} className="flex flex-1 overflow-y-auto px-6 py-6">
-            <div className="mx-auto flex w-full max-w-3xl flex-col items-center gap-8 pb-12">
+          <div ref={scrollContainerRef} className="flex flex-1 overflow-auto px-6 py-6">
+            <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-8 pb-12">
               {Array.from({ length: pageCount }, (_, index) => (
                 <canvas
                   key={`page-${index + 1}`}
                   ref={(el) => {
-                    canvasRefs.current[index] = el
+                    canvasRefs.current[index] = el ?? null
                   }}
-                  className="w-full rounded-xl border border-slate-800/80 bg-black/75 shadow-[0_25px_60px_-35px_rgba(15,23,42,0.9)]"
+                  className="rounded-xl border border-slate-800/80 bg-black/75 shadow-[0_25px_60px_-35px_rgba(15,23,42,0.9)]"
                 />
               ))}
             </div>

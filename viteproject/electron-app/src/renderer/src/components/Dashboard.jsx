@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DocumentIcon,
   CloudArrowUpIcon,
   FolderOpenIcon,
   PlusIcon,
-  EyeIcon
+  EyeIcon,
+  PencilSquareIcon,
+  ChevronDownIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
 import PdfPreview from './PdfPreview'
 
@@ -67,11 +70,26 @@ const getFileIcon = (extension) => {
   return <DocumentIcon className={`h-6 w-6 ${accent}`} />
 }
 
+const generateDocumentId = () => {
+  if (
+    typeof globalThis.crypto !== 'undefined' &&
+    typeof globalThis.crypto.randomUUID === 'function'
+  ) {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 function Dashboard() {
   const [documents, setDocuments] = useState([])
   const [activeDocumentId, setActiveDocumentId] = useState(null)
   const [overlayDocument, setOverlayDocument] = useState(null)
   const [isOverlayOpen, setIsOverlayOpen] = useState(false)
+  const [isDragActive, setIsDragActive] = useState(false)
+  const [isSourceMenuOpen, setIsSourceMenuOpen] = useState(false)
+  const [toast, setToast] = useState(null)
+  const uploadTileRef = useRef(null)
 
   useEffect(() => {
     if (!documents.length) {
@@ -100,6 +118,72 @@ function Dashboard() {
     setOverlayDocument(null)
   }
 
+  useEffect(() => {
+    if (!isSourceMenuOpen) return
+
+    const handleClickOutside = (event) => {
+      if (!uploadTileRef.current?.contains(event.target)) {
+        setIsSourceMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isSourceMenuOpen])
+
+  useEffect(() => {
+    if (!toast) return
+
+    const timeout = setTimeout(() => setToast(null), 3200)
+    return () => clearTimeout(timeout)
+  }, [toast])
+
+  const triggerToast = (message) => {
+    if (!message) return
+    setToast({ id: Date.now(), message })
+  }
+
+  const dismissToast = () => {
+    setToast(null)
+  }
+
+  const mergeDocuments = (incomingDocs) => {
+    if (!incomingDocs?.length) {
+      return { docToPreview: null, newCount: 0 }
+    }
+
+    let docToPreview = null
+    let newDocsCount = 0
+
+    setDocuments((prev) => {
+      const existingByPath = new Map(prev.map((doc) => [doc.path, doc]))
+      const merged = [...prev]
+
+      incomingDocs.forEach((doc) => {
+        const existing = existingByPath.get(doc.path)
+        if (existing) {
+          docToPreview = docToPreview ?? existing
+        } else {
+          merged.push(doc)
+          existingByPath.set(doc.path, doc)
+          docToPreview = docToPreview ?? doc
+          newDocsCount += 1
+        }
+      })
+
+      return merged
+    })
+
+    if (!docToPreview) {
+      docToPreview = incomingDocs[0]
+    }
+
+    return { docToPreview, newCount: newDocsCount }
+  }
+
   const handleDocumentSelection = async () => {
     if (!window?.api?.openDocuments) {
       console.warn('Document picker is not available.')
@@ -113,36 +197,23 @@ function Dashboard() {
       }
 
       const normalized = result.files.map(normalizeDocument)
-      let docToPreview = null
-
-      setDocuments((prev) => {
-        const existingByPath = new Map(prev.map((doc) => [doc.path, doc]))
-        const merged = [...prev]
-
-        normalized.forEach((doc) => {
-          const existing = existingByPath.get(doc.path)
-          if (existing) {
-            docToPreview = docToPreview ?? existing
-          } else {
-            merged.push(doc)
-            existingByPath.set(doc.path, doc)
-            docToPreview = docToPreview ?? doc
-          }
-        })
-
-        return merged
-      })
-
-      if (!docToPreview && normalized.length) {
-        docToPreview = normalized[0]
-      }
+      const { docToPreview, newCount } = mergeDocuments(normalized)
 
       if (docToPreview) {
         setActiveDocumentId(docToPreview.id)
-        openPreviewOverlay(docToPreview)
+        if (newCount > 0) {
+          triggerToast(
+            newCount === 1
+              ? 'Your file was uploaded successfully.'
+              : `${newCount} files were uploaded successfully.`
+          )
+        } else {
+          triggerToast('This file is already in your workspace.')
+        }
       }
     } catch (error) {
       console.error('Unable to select documents', error)
+      triggerToast('Something went wrong while uploading. Please try again.')
     }
   }
 
@@ -154,14 +225,91 @@ function Dashboard() {
     handleDocumentSelection()
   }
 
+  const handleImportFromCloud = () => {
+    console.info('Cloud import integrations are coming soon.')
+  }
+
+  const handleDragOver = (event) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    if (!isDragActive) {
+      setIsDragActive(true)
+    }
+  }
+
+  const handleDragLeave = (event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsDragActive(false)
+    }
+  }
+
+  const handleDropUpload = (event) => {
+    event.preventDefault()
+    setIsDragActive(false)
+    setIsSourceMenuOpen(false)
+
+    const files = Array.from(event.dataTransfer?.files || []).filter((file) => file?.path)
+    if (!files.length) {
+      return
+    }
+
+    const normalized = files.map((file) =>
+      normalizeDocument({
+        id: generateDocumentId(),
+        name: file.name,
+        path: file.path,
+        size: file.size,
+        lastModified: file.lastModified,
+        extension: (file.name.split('.').pop() || '').toLowerCase()
+      })
+    )
+
+    const { docToPreview, newCount } = mergeDocuments(normalized)
+
+    if (docToPreview) {
+      setActiveDocumentId(docToPreview.id)
+      if (newCount > 0) {
+        triggerToast(
+          newCount === 1
+            ? 'Your file was uploaded successfully.'
+            : `${newCount} files were uploaded successfully.`
+        )
+      } else {
+        triggerToast('These files are already in your workspace.')
+      }
+    }
+  }
+
+  const handleDropZoneKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      setIsSourceMenuOpen((prev) => !prev)
+    }
+  }
+
+  const toggleSourceMenu = () => {
+    setIsSourceMenuOpen((prev) => !prev)
+  }
+
+  const handleSourceSelection = (callback) => (event) => {
+    event.stopPropagation()
+    setIsSourceMenuOpen(false)
+    callback()
+  }
+
   const handleThumbnailClick = (doc) => {
     setActiveDocumentId(doc.id)
-    openPreviewOverlay(doc)
   }
 
   const handlePreviewClick = () => {
     if (selectedDocument) {
       openPreviewOverlay(selectedDocument)
+    }
+  }
+
+  const handleSignClick = () => {
+    if (selectedDocument) {
+      console.info('Sign request initiated for', selectedDocument.name)
     }
   }
 
@@ -194,47 +342,169 @@ function Dashboard() {
           </div>
         </header>
         <main className="flex flex-1 flex-col gap-5 overflow-hidden lg:gap-6">
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-[1.1fr_1fr]">
-            <button
-              onClick={handleUpload}
-              className="group flex min-h-[7.5rem] items-start justify-between rounded-3xl border border-slate-800/70 bg-slate-900/70 px-6 py-5 text-left transition-colors hover:border-indigo-400 hover:bg-slate-900/80 sm:px-7 sm:py-6"
-            >
-              <div className="max-w-sm pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                  Upload
-                </p>
-                <h2 className="mt-1.5 text-lg font-semibold tracking-tight">Add a document</h2>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                  Bring a new file into the workspace. Drag-and-drop is supported.
-                </p>
-                <span className="mt-3 inline-block text-xs font-medium text-indigo-300 opacity-0 transition-opacity group-hover:opacity-100">
-                  Supports PDF, DOCX, TXT
-                </span>
+          <section className="flex flex-col gap-6 rounded-3xl border border-slate-800/70 bg-slate-900/70 px-6 py-6 shadow-[0_20px_65px_-38px_rgba(15,23,42,0.9)] sm:px-7 sm:py-7">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-4">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-800 bg-slate-900">
+                  <CloudArrowUpIcon className="h-6 w-6 text-indigo-300" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+                    Upload center
+                  </p>
+                  <h2 className="mt-1.5 text-xl font-semibold tracking-tight">Upload a document</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                    Choose where to import from or drop files right here.
+                  </p>
+                </div>
               </div>
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900">
-                <CloudArrowUpIcon className="h-7 w-7 text-indigo-300" />
+              <div className="hidden shrink-0 items-center gap-2 rounded-2xl border border-indigo-400/40 bg-indigo-500/10 px-4 py-2 text-xs font-medium text-indigo-200 sm:flex">
+                Drag-and-drop enabled
               </div>
-            </button>
-            <button
-              onClick={handleOpenDocument}
-              className="group flex min-h-[7.5rem] items-start justify-between rounded-3xl border border-slate-800/70 bg-slate-900/70 px-6 py-5 text-left transition-colors hover:border-indigo-400 hover:bg-slate-900/80 sm:px-7 sm:py-6"
-            >
-              <div className="max-w-sm pr-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                  Browse
-                </p>
-                <h2 className="mt-1.5 text-lg font-semibold tracking-tight">Open existing file</h2>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                  Quickly locate a document already on your device or shared drive.
-                </p>
-                <span className="mt-3 inline-block text-xs font-medium text-indigo-300 opacity-0 transition-opacity group-hover:opacity-100">
-                  Recent locations remembered
-                </span>
+            </div>
+            <div className="flex flex-col gap-6 lg:flex-row">
+              <div className="flex-1">
+                <div
+                  ref={uploadTileRef}
+                  className={`relative flex min-h-[220px] w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-8 py-8 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 ${
+                    isDragActive
+                      ? 'border-indigo-400/80 bg-indigo-500/10'
+                      : 'border-slate-800/80 bg-slate-950/60 hover:border-indigo-400/60 hover:bg-slate-900'
+                  }`}
+                  onClick={toggleSourceMenu}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDropUpload}
+                  onKeyDown={handleDropZoneKeyDown}
+                  role="button"
+                  tabIndex={0}
+                  aria-haspopup="menu"
+                  aria-expanded={isSourceMenuOpen}
+                  aria-label="Upload a document"
+                >
+                  <div className="grid h-12 w-12 place-items-center rounded-xl border border-slate-800 bg-slate-900">
+                    <CloudArrowUpIcon
+                      className={`h-6 w-6 transition-colors ${
+                        isDragActive
+                          ? 'text-indigo-300'
+                          : 'text-slate-500 group-hover:text-indigo-300'
+                      }`}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-slate-100">
+                      {isDragActive
+                        ? 'Release to upload your files'
+                        : 'Drop files or click to choose'}
+                    </p>
+                    <p className="text-xs text-slate-400">Supports PDF, DOCX, and TXT formats.</p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-900/70 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300 transition group-hover:border-indigo-400/60 group-hover:bg-indigo-500/10">
+                    Choose source
+                    <ChevronDownIcon
+                      className={`h-4 w-4 transition-transform ${
+                        isSourceMenuOpen ? 'rotate-180 text-indigo-300' : 'text-slate-500'
+                      }`}
+                    />
+                  </div>
+                  {isSourceMenuOpen && (
+                    <div
+                      className="absolute left-1/2 top-full z-10 mt-4 w-full max-w-xs -translate-x-1/2 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/95 text-left shadow-xl shadow-indigo-500/10"
+                      role="menu"
+                    >
+                      <button
+                        type="button"
+                        onClick={handleSourceSelection(handleUpload)}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-slate-100 transition hover:bg-indigo-500/10"
+                        role="menuitem"
+                      >
+                        <FolderOpenIcon className="h-5 w-5 text-indigo-300" />
+                        Upload from device
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSourceSelection(handleOpenDocument)}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-slate-100 transition hover:bg-indigo-500/10"
+                        role="menuitem"
+                      >
+                        <DocumentIcon className="h-5 w-5 text-indigo-300" />
+                        Browse recent files
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSourceSelection(handleImportFromCloud)}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-slate-100 transition hover:bg-indigo-500/10"
+                        role="menuitem"
+                        title="Connect to cloud storage providers (coming soon)"
+                      >
+                        <CloudArrowUpIcon className="h-5 w-5 text-indigo-300" />
+                        Import from cloud
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900">
-                <FolderOpenIcon className="h-7 w-7 text-indigo-300" />
+              <div className="flex-1 rounded-2xl border border-slate-800/70 bg-slate-950/70 px-6 py-5 shadow-inner shadow-black/20">
+                {selectedDocument ? (
+                  <div className="flex h-full flex-col justify-between gap-4">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+                          Selected document
+                        </p>
+                        <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-100">
+                          {selectedDocument.name}
+                        </h3>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handlePreviewClick}
+                          className="inline-flex items-center gap-2 rounded-xl border border-indigo-400/60 px-4 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/10"
+                        >
+                          <EyeIcon className="h-4 w-4" />
+                          Preview
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSignClick}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/80"
+                        >
+                          <PencilSquareIcon className="h-4 w-4" />
+                          Sign
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-slate-200">
+                        {selectedDocument.extension
+                          ? selectedDocument.extension.toUpperCase()
+                          : 'Unknown'}
+                      </span>
+                      <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-slate-200">
+                        {selectedDocument.sizeLabel}
+                      </span>
+                      {selectedDocument.lastModifiedLabel ? (
+                        <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-slate-200">
+                          Updated {selectedDocument.lastModifiedLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-xs text-slate-500" title={selectedDocument.path}>
+                      {selectedDocument.path}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2 px-4 py-6 text-center text-sm text-slate-400">
+                    <p>No document selected yet.</p>
+                    <p className="text-xs text-slate-500">
+                      Upload a file or choose one from recent activity to access preview and
+                      signing.
+                    </p>
+                  </div>
+                )}
               </div>
-            </button>
+            </div>
           </section>
           <section className="flex flex-1 flex-col gap-5 rounded-3xl border border-slate-800/70 bg-slate-900/70 px-6 py-6 shadow-[0_18px_60px_-32px_rgba(15,23,42,0.9)] sm:px-8 sm:py-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -245,27 +515,33 @@ function Dashboard() {
                 <h2 className="mt-2 text-2xl font-semibold tracking-tight">Recent activity</h2>
               </div>
               {documents.length === 0 ? (
-                <button
-                  onClick={handleUpload}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-400"
-                >
-                  <PlusIcon className="h-5 w-5" />
-                  Add new document
-                </button>
+                <p className="text-xs text-slate-500">
+                  Upload a file above to populate your recent activity.
+                </p>
               ) : (
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-indigo-300">
-                    {documents.length} files
-                  </span>
-                  {selectedDocument?.lastModifiedLabel ? (
-                    <span>Updated {selectedDocument.lastModifiedLabel}</span>
-                  ) : (
-                    <span>Updated recently</span>
-                  )}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-indigo-300">
+                      {documents.length} files
+                    </span>
+                    {selectedDocument?.lastModifiedLabel ? (
+                      <span>Updated {selectedDocument.lastModifiedLabel}</span>
+                    ) : (
+                      <span>Updated recently</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleUpload}
+                    className="inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-400"
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                    Add more
+                  </button>
                 </div>
               )}
             </div>
-            <div className="flex flex-1 flex-col gap-5 rounded-2xl border border-slate-800/60 bg-slate-950/50 p-0 md:flex-row">
+            <div className="flex flex-1 flex-col rounded-2xl border border-slate-800/60 bg-slate-950/50 px-4 py-5">
               {documents.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
                   <div className="grid h-14 w-14 place-items-center rounded-xl border border-slate-800 bg-slate-900">
@@ -279,146 +555,46 @@ function Dashboard() {
                       Upload your first document to get started
                     </h3>
                   </div>
-                  <button
-                    onClick={handleUpload}
-                    className="rounded-lg border border-indigo-400/60 px-4 py-2 text-sm font-medium text-indigo-200 transition-colors hover:bg-indigo-500/10"
-                  >
-                    Upload a document
-                  </button>
                 </div>
               ) : (
-                <>
-                  <div className="flex h-full w-full flex-col border-b border-slate-800/60 md:w-[260px] md:border-b-0 md:border-r">
-                    <div className="flex items-center justify-between px-5 py-4">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                          Your files
-                        </p>
-                        <h3 className="mt-1 text-sm font-semibold text-slate-200">
-                          Recent activity
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleUpload}
-                        className="grid h-9 w-9 place-items-center rounded-full bg-indigo-500 text-white shadow-sm transition hover:bg-indigo-400"
-                        aria-label="Add documents"
-                      >
-                        <PlusIcon className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <ul className="flex-1 divide-y divide-slate-800/70 overflow-y-auto">
-                      {documents.map((doc) => {
-                        const isActive = selectedDocument?.id === doc.id
-                        return (
-                          <li key={doc.id}>
-                            <button
-                              type="button"
-                              onClick={() => handleThumbnailClick(doc)}
-                              className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
-                                isActive
-                                  ? 'bg-indigo-500/15 ring-1 ring-inset ring-indigo-400/60'
-                                  : 'hover:bg-slate-900/80'
-                              }`}
-                            >
-                              <div className="grid h-10 w-10 place-items-center rounded-xl border border-slate-800 bg-slate-900">
-                                {getFileIcon(doc.extension)}
-                              </div>
-                              <div className="flex-1 overflow-hidden">
-                                <p className="truncate text-sm font-medium text-slate-100">
-                                  {doc.name}
-                                </p>
-                                <p className="text-[11px] text-slate-500">{doc.sizeLabel}</p>
-                              </div>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </div>
-                  <div className="flex flex-1 flex-col">
-                    {selectedDocument ? (
-                      <div className="flex h-full flex-col">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/60 px-6 py-5">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                              Document
-                            </p>
-                            <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-100">
-                              {selectedDocument.name}
-                            </h3>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={handlePreviewClick}
-                              className="inline-flex items-center gap-2 rounded-xl border border-indigo-400/60 px-4 py-2 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/10"
-                            >
-                              <EyeIcon className="h-4 w-4" />
-                              Preview
-                            </button>
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-2 rounded-xl border border-slate-800 px-4 py-2 text-xs font-medium text-slate-300 transition hover:bg-slate-800/80"
-                            >
-                              Sign
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex flex-1 flex-col gap-6 px-6 py-6 text-sm text-slate-300">
-                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                              <p className="text-[10px] uppercase tracking-[0.35em] text-slate-500">
-                                File type
-                              </p>
-                              <p className="mt-2 text-base font-semibold text-slate-100">
-                                {selectedDocument.extension
-                                  ? selectedDocument.extension.toUpperCase()
-                                  : '—'}
-                              </p>
+                <ul className="grid flex-1 grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {documents.map((doc) => {
+                    const isActive = selectedDocument?.id === doc.id
+                    return (
+                      <li key={doc.id}>
+                        <button
+                          type="button"
+                          onClick={() => handleThumbnailClick(doc)}
+                          className={`flex w-full flex-col gap-3 rounded-2xl border px-4 py-4 text-left transition ${
+                            isActive
+                              ? 'border-indigo-400/60 bg-indigo-500/10 shadow-[0_0_0_1px_rgba(99,102,241,0.35)]'
+                              : 'border-slate-800 bg-slate-900/60 hover:border-indigo-400/50 hover:bg-slate-900'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="grid h-10 w-10 place-items-center rounded-xl border border-slate-800 bg-slate-900">
+                              {getFileIcon(doc.extension)}
                             </div>
-                            <div>
-                              <p className="text-[10px] uppercase tracking-[0.35em] text-slate-500">
-                                File size
+                            <div className="flex-1 overflow-hidden">
+                              <p className="truncate text-sm font-semibold text-slate-100">
+                                {doc.name}
                               </p>
-                              <p className="mt-2 text-base font-semibold text-slate-100">
-                                {selectedDocument.sizeLabel}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] uppercase tracking-[0.35em] text-slate-500">
-                                Last modified
-                              </p>
-                              <p className="mt-2 text-base font-semibold text-slate-100">
-                                {selectedDocument.lastModifiedLabel}
-                              </p>
-                            </div>
-                            <div className="truncate">
-                              <p className="text-[10px] uppercase tracking-[0.35em] text-slate-500">
-                                Location
-                              </p>
-                              <p className="mt-2 truncate text-base font-semibold text-slate-100">
-                                {selectedDocument.path}
-                              </p>
+                              <p className="text-[11px] text-slate-500">{doc.sizeLabel}</p>
                             </div>
                           </div>
-                          <div className="rounded-2xl border border-slate-800/60 bg-slate-900/60 px-5 py-4 text-xs text-slate-400">
-                            <p>
-                              Click a thumbnail on the left to open an overlay preview.
-                              <span className="block">
-                                PDF files render inside the app. Other formats are coming soon.
-                              </span>
-                            </p>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                            {doc.lastModifiedLabel ? (
+                              <span>Updated {doc.lastModifiedLabel}</span>
+                            ) : null}
+                            <span className="truncate" title={doc.path}>
+                              {doc.path}
+                            </span>
                           </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-slate-400">
-                        <p>Select a document from the left to view details.</p>
-                      </div>
-                    )}
-                  </div>
-                </>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
               )}
             </div>
           </section>
@@ -460,19 +636,40 @@ function Dashboard() {
           </section>
         </main>
       </div>
+      {toast && (
+        <div className="pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4">
+          <div className="pointer-events-auto flex items-start gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/95 px-5 py-4 shadow-[0_20px_60px_-35px_rgba(99,102,241,0.5)]">
+            <div>
+              <p className="text-sm font-semibold text-slate-100">{toast.message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={dismissToast}
+              className="mt-0.5 rounded-full border border-slate-800/70 p-1 text-slate-400 transition hover:border-slate-700 hover:text-slate-200"
+            >
+              <XMarkIcon className="h-4 w-4" />
+              <span className="sr-only">Dismiss notification</span>
+            </button>
+          </div>
+        </div>
+      )}
       {isOverlayOpen && overlayDocument && (
         <div
-          className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm"
+          className="absolute inset-0 z-40 overflow-y-auto bg-slate-950/85 backdrop-blur-sm"
           role="presentation"
           onClick={closePreviewOverlay}
         >
           <div
-            className="relative h-[min(90vh,680px)] w-[min(960px,92vw)] overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-950 shadow-[0_35px_120px_-45px_rgba(15,23,42,0.95)]"
-            role="dialog"
-            aria-modal="true"
+            className="flex min-h-full items-center justify-center px-4 py-12 sm:px-6"
             onClick={(event) => event.stopPropagation()}
           >
-            <PdfPreview file={overlayDocument} onClose={closePreviewOverlay} />
+            <div
+              className="relative w-full max-w-5xl rounded-3xl border border-slate-800/80 bg-slate-950 shadow-[0_35px_120px_-45px_rgba(15,23,42,0.95)]"
+              role="dialog"
+              aria-modal="true"
+            >
+              <PdfPreview file={overlayDocument} onClose={closePreviewOverlay} />
+            </div>
           </div>
         </div>
       )}
