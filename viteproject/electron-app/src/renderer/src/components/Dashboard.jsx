@@ -204,11 +204,11 @@ function Dashboard() {
         if (newCount > 0) {
           triggerToast(
             newCount === 1
-              ? 'Your file was uploaded successfully.'
+              ? 'Your file has been successfully uploaded.'
               : `${newCount} files were uploaded successfully.`
           )
         } else {
-          triggerToast('This file is already in your workspace.')
+          triggerToast('Your file has been successfully uploaded.')
         }
       }
     } catch (error) {
@@ -271,11 +271,11 @@ function Dashboard() {
       if (newCount > 0) {
         triggerToast(
           newCount === 1
-            ? 'Your file was uploaded successfully.'
+            ? 'Your file has been successfully uploaded.'
             : `${newCount} files were uploaded successfully.`
         )
       } else {
-        triggerToast('These files are already in your workspace.')
+        triggerToast('Your file has been successfully uploaded.')
       }
     }
   }

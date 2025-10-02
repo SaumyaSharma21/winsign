@@ -3,7 +3,8 @@ import PropTypes from 'prop-types'
 import { getDocument } from '../utils/pdf'
 
 const SCALE_STEP = 0.25
-const MIN_SCALE = 0.75
+const MIN_SCALE = 0.25
+const DEFAULT_SCALE = 0.75
 const MAX_SCALE = 2.5
 
 function PdfPreview({ file, onClose }) {
@@ -13,7 +14,7 @@ function PdfPreview({ file, onClose }) {
   const renderTokenRef = useRef(0)
   const [pdf, setPdf] = useState(null)
   const [pageCount, setPageCount] = useState(0)
-  const [scale, setScale] = useState(MIN_SCALE)
+  const [scale, setScale] = useState(DEFAULT_SCALE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -28,6 +29,7 @@ function PdfPreview({ file, onClose }) {
         setPageCount(0)
         setError(null)
         setLoading(false)
+        setScale(DEFAULT_SCALE)
         return
       }
 
@@ -36,6 +38,7 @@ function PdfPreview({ file, onClose }) {
         setPageCount(0)
         setError(null)
         setLoading(false)
+        setScale(DEFAULT_SCALE)
         return
       }
 
@@ -63,7 +66,7 @@ function PdfPreview({ file, onClose }) {
         canvasRefs.current = []
         setPdf(pdfDoc)
         setPageCount(pdfDoc.numPages)
-        setScale(MIN_SCALE)
+        setScale(DEFAULT_SCALE)
         if (scrollContainerRef.current) {
           scrollContainerRef.current.scrollTop = 0
         }
