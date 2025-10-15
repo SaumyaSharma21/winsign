@@ -1,9 +1,10 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { basename, extname, join } from 'path'
+import { basename, extname, join, parse } from 'path'
 import { promises as fs } from 'fs'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { signDocument, verifyDocument } from './signature.js'
 
 function createWindow() {
   // Create the browser window.
@@ -104,7 +105,98 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('documents:sign', async (_event, { filePath, signatureFields }) => {
+    try {
+      console.log('[documents:sign] Starting signing process...')
+      console.log('[documents:sign] File path:', filePath)
+      console.log('[documents:sign] Signature fields:', signatureFields?.length, 'fields')
+
+      // Generate output filename
+      const parsedPath = parse(filePath)
+      const outputFileName = `${parsedPath.name}_signed${parsedPath.ext}`
+      const outputPath = join(parsedPath.dir, outputFileName)
+
+      console.log('[documents:sign] Output path:', outputPath)
+
+      // Sign the document
+      const result = await signDocument(filePath, signatureFields, outputPath)
+
+      console.log('[documents:sign] Signing result:', result)
+
+      if (result.success) {
+        return {
+          success: true,
+          signedFilePath: result.signedFilePath,
+          signatureInfo: result.signatureInfo
+        }
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      console.error('[documents:sign] failed', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  })
+
+  ipcMain.handle('documents:verify', async (_event, signedFilePath) => {
+    try {
+      const result = await verifyDocument(signedFilePath)
+      return result
+    } catch (error) {
+      console.error('[documents:verify] failed', error)
+      return {
+        isValid: false,
+        reason: 'Verification failed: ' + error.message
+      }
+    }
+  })
+
+  // Add download handler for signed documents
+  ipcMain.handle('documents:download', async (_event, { filePath, fileName }) => {
+    try {
+      const result = await dialog.showSaveDialog({
+        title: 'Save Signed Document',
+        defaultPath: fileName,
+        filters: [
+          { name: 'PDF Files', extensions: ['pdf'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      })
+
+      if (!result.canceled && result.filePath) {
+        // Copy the file to the selected location
+        await fs.copyFile(filePath, result.filePath)
+        return {
+          success: true,
+          savedPath: result.filePath
+        }
+      } else {
+        return {
+          success: false,
+          error: 'Download cancelled'
+        }
+      }
+    } catch (error) {
+      console.error('[documents:download] failed', error)
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+  })
+
   createWindow()
+
+  console.log('✅ IPC handlers registered:', [
+    'documents:open',
+    'documents:read',
+    'documents:sign',
+    'documents:verify',
+    'documents:download'
+  ])
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

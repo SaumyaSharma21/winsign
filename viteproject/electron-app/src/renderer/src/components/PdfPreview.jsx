@@ -7,7 +7,7 @@ const MIN_SCALE = 0.25
 const DEFAULT_SCALE = 0.75
 const MAX_SCALE = 2.5
 
-function PdfPreview({ file, onClose }) {
+function PdfPreview({ file, onClose, signatureFields = [] }) {
   const scrollContainerRef = useRef(null)
   const canvasRefs = useRef([])
   const pdfInstanceRef = useRef(null)
@@ -18,7 +18,22 @@ function PdfPreview({ file, onClose }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
+  const [signatureFieldsRendered, setSignatureFieldsRendered] = useState(false)
+
   const isPdf = (file?.extension || '').toLowerCase() === 'pdf'
+
+  // Re-trigger signature field rendering when PDF is loaded
+  useEffect(() => {
+    if (pdf && pageCount > 0 && signatureFields.length > 0) {
+      console.log('PdfPreview: PDF loaded, triggering signature field render')
+      // Small delay to ensure canvas is rendered
+      setTimeout(() => {
+        setSignatureFieldsRendered((prev) => !prev)
+      }, 100)
+    }
+  }, [pdf, pageCount, signatureFields])
+
+  // Debug: Check if API is available
 
   useEffect(() => {
     let cancelled = false
@@ -154,6 +169,67 @@ function PdfPreview({ file, onClose }) {
     }
   }, [pdf, pageCount, scale])
 
+  const renderSignatureField = (field, pageNumber) => {
+    const canvas = canvasRefs.current[pageNumber - 1]
+    if (!canvas) {
+      return null
+    }
+
+    const rect = canvas.getBoundingClientRect()
+
+    // Check if canvas has been rendered yet
+    if (rect.width === 0 || rect.height === 0) {
+      // Try again after a short delay
+      setTimeout(() => {
+        // Force a re-render by updating a state or calling forceUpdate
+        console.log('PdfPreview: Retrying signature rendering after canvas render')
+      }, 100)
+      return null
+    }
+
+    const scaleX = rect.width / (canvas.width / (window.devicePixelRatio || 1))
+    const scaleY = rect.height / (canvas.height / (window.devicePixelRatio || 1))
+
+    const style = {
+      position: 'absolute',
+      left: `${field.x * scaleX}px`,
+      top: `${field.y * scaleY}px`,
+      width: `${field.width * scaleX}px`,
+      height: `${field.height * scaleY}px`,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      userSelect: 'none',
+      backgroundColor: 'transparent', // No background
+      border: 'none', // No border
+      boxShadow: 'none', // No shadow
+      zIndex: 10 // Ensure it appears above the canvas
+    }
+
+    return (
+      <div key={field.id} style={style}>
+        {field.signature && field.signature.data ? (
+          // Show actual signature with transparent background
+          <img
+            src={field.signature.data}
+            alt={field.signature.name || 'Signature'}
+            className="w-full h-full object-contain"
+            style={{
+              maxWidth: '100%',
+              maxHeight: '100%',
+              padding: '0', // Remove all padding
+              margin: '0', // Remove all margin
+              backgroundColor: 'transparent' // Ensure transparent background
+            }}
+          />
+        ) : (
+          // Show minimal placeholder text only if no signature data
+          <span className="text-xs text-gray-700 font-medium opacity-70">Signed</span>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="pointer-events-auto flex h-full max-h-[calc(100vh-6rem)] min-h-0 w-full flex-col">
       <div className="flex flex-none items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-900/80 px-6 py-4">
@@ -221,13 +297,21 @@ function PdfPreview({ file, onClose }) {
           <div ref={scrollContainerRef} className="flex flex-1 overflow-auto px-6 py-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-8 pb-12">
               {Array.from({ length: pageCount }, (_, index) => (
-                <canvas
-                  key={`page-${index + 1}`}
-                  ref={(el) => {
-                    canvasRefs.current[index] = el ?? null
-                  }}
-                  className="rounded-xl border border-slate-800/80 bg-black/75 shadow-[0_25px_60px_-35px_rgba(15,23,42,0.9)]"
-                />
+                <div key={`page-${index + 1}`} className="relative">
+                  <canvas
+                    ref={(el) => {
+                      canvasRefs.current[index] = el ?? null
+                    }}
+                    className="rounded-xl border border-slate-800/80 bg-black/75 shadow-[0_25px_60px_-35px_rgba(15,23,42,0.9)]"
+                  />
+                  <div className="absolute top-2 left-2 bg-slate-900/80 backdrop-blur-sm px-2 py-1 rounded text-xs text-slate-300 font-medium">
+                    Page {index + 1}
+                  </div>
+                  {/* Render signature fields for this page */}
+                  {signatureFields
+                    .filter((field) => field.pageNumber === index + 1)
+                    .map((field) => renderSignatureField(field, index + 1))}
+                </div>
               ))}
             </div>
           </div>
@@ -244,7 +328,8 @@ PdfPreview.propTypes = {
     path: PropTypes.string,
     extension: PropTypes.string
   }),
-  onClose: PropTypes.func
+  onClose: PropTypes.func,
+  signatureFields: PropTypes.arrayOf(PropTypes.object)
 }
 
 export default PdfPreview

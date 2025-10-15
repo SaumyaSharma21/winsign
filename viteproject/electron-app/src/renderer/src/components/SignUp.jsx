@@ -14,7 +14,7 @@ const SignUp = ({ onSignUp, onBack }) => {
           <h1 className="text-2xl font-bold text-white mb-2">Create Account ✨</h1>
           <p className="text-gray-400">Join WinSign today</p>
         </div>
-        
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
@@ -25,7 +25,7 @@ const SignUp = ({ onSignUp, onBack }) => {
               required
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
@@ -35,7 +35,7 @@ const SignUp = ({ onSignUp, onBack }) => {
               required
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <input
@@ -45,7 +45,7 @@ const SignUp = ({ onSignUp, onBack }) => {
               required
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
             <input
@@ -55,7 +55,7 @@ const SignUp = ({ onSignUp, onBack }) => {
               required
             />
           </div>
-          
+
           <div className="flex items-center">
             <input
               type="checkbox"
@@ -66,7 +66,7 @@ const SignUp = ({ onSignUp, onBack }) => {
               I agree to the Terms of Service and Privacy Policy
             </span>
           </div>
-          
+
           <button
             type="submit"
             className="w-full py-2 px-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors duration-200"
@@ -74,14 +74,14 @@ const SignUp = ({ onSignUp, onBack }) => {
             Create Account
           </button>
         </form>
-        
+
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-600">
             Already have an account?{' '}
             <button className="text-green-600 hover:text-green-500 font-medium">Sign in</button>
           </p>
         </div>
-        
+
         {onBack && (
           <div className="mt-4 text-center">
             <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-700">

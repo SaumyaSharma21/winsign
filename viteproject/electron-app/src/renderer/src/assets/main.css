@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @import './base.css';
 
 body {
@@ -38,8 +38,8 @@ code {
   width: 500px;
   will-change: filter;
   transition: filter 300ms;
-  margin-bottom: 1px; 
-  object-fit: contain;   /* ensures the image scales correctly */
+  margin-bottom: 1px;
+  object-fit: contain; /* ensures the image scales correctly */
   object-position: center top;
 }
 
@@ -73,7 +73,7 @@ code {
 }
 
 .react {
-  background: -webkit-linear-gradient(318deg,#719deeaa,#3e7df1 55%, #9d7ee1, #de65caaa, #f69fd0);
+  background: -webkit-linear-gradient(318deg, #719deeaa, #3e7df1 55%, #9d7ee1, #de65caaa, #f69fd0);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;

@@ -3,13 +3,13 @@ import {
   DocumentIcon,
   CloudArrowUpIcon,
   FolderOpenIcon,
-  PlusIcon,
   EyeIcon,
   PencilSquareIcon,
   ChevronDownIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
 import PdfPreview from './PdfPreview'
+import SignatureEditor from './SignatureEditor'
 
 const formatFileSize = (bytes) => {
   if (typeof bytes !== 'number' || Number.isNaN(bytes)) {
@@ -67,7 +67,9 @@ const getFileIcon = (extension) => {
         ? 'text-sky-300'
         : 'text-indigo-300'
 
-  return <DocumentIcon className={`h-6 w-6 ${accent}`} />
+  return (
+    <DocumentIcon className={`h-2 w-2 sm:h-2.5 sm:w-2.5 md:h-3 md:w-3 lg:h-4 lg:w-4 ${accent}`} />
+  )
 }
 
 const generateDocumentId = () => {
@@ -86,6 +88,7 @@ function Dashboard() {
   const [activeDocumentId, setActiveDocumentId] = useState(null)
   const [overlayDocument, setOverlayDocument] = useState(null)
   const [isOverlayOpen, setIsOverlayOpen] = useState(false)
+  const [isSigningMode, setIsSigningMode] = useState(false)
   const [isDragActive, setIsDragActive] = useState(false)
   const [isSourceMenuOpen, setIsSourceMenuOpen] = useState(false)
   const [toast, setToast] = useState(null)
@@ -107,6 +110,9 @@ function Dashboard() {
     [documents, activeDocumentId]
   )
 
+  // Filter documents into signed and unsigned
+  const signedDocuments = useMemo(() => documents.filter((doc) => doc.isSigned), [documents])
+
   const openPreviewOverlay = (doc) => {
     if (!doc) return
     setOverlayDocument(doc)
@@ -116,6 +122,14 @@ function Dashboard() {
   const closePreviewOverlay = () => {
     setIsOverlayOpen(false)
     setOverlayDocument(null)
+    setIsSigningMode(false)
+  }
+
+  const openSigningMode = (doc) => {
+    if (!doc) return
+    setOverlayDocument(doc)
+    setIsOverlayOpen(true)
+    setIsSigningMode(true)
   }
 
   useEffect(() => {
@@ -309,283 +323,475 @@ function Dashboard() {
 
   const handleSignClick = () => {
     if (selectedDocument) {
-      console.info('Sign request initiated for', selectedDocument.name)
+      openSigningMode(selectedDocument)
+    }
+  }
+
+  const handleEditSignClick = (doc) => {
+    if (!doc) return
+    // Open signing mode for editing existing signatures
+    setOverlayDocument(doc)
+    setIsOverlayOpen(true)
+    setIsSigningMode(true)
+  }
+
+  const handleSaveSignedDocument = (signedDocumentData) => {
+    console.info('Signed document preview created:', signedDocumentData)
+
+    if (signedDocumentData.isEditing && signedDocumentData.editingDocumentId) {
+      // Update existing document when editing
+      setDocuments((prev) =>
+        prev.map((doc) => {
+          if (doc.id === signedDocumentData.editingDocumentId) {
+            return {
+              ...doc,
+              signatureFields: signedDocumentData.signatureFields,
+              signatureInfo: signedDocumentData.signatureInfo,
+              signedAt: signedDocumentData.signedAt,
+              lastModified: new Date().toISOString()
+            }
+          }
+          return doc
+        })
+      )
+
+      triggerToast(
+        `✏️ Document signatures updated! "${signedDocumentData.originalFile.name}" is ready for download.`
+      )
+    } else {
+      // Create a new document entry for the signed document preview
+      const signedDocument = {
+        id: Date.now(), // Generate new ID
+        name: signedDocumentData.originalFile.name.replace('.pdf', '_signed.pdf'),
+        path: signedDocumentData.signedFilePath || signedDocumentData.originalFile.path, // Use original path for preview
+        size: signedDocumentData.originalFile.size, // Estimate - actual size would be different
+        type: 'application/pdf',
+        extension: 'pdf',
+        lastModified: new Date().toISOString(),
+        isSigned: true,
+        isPreview: signedDocumentData.isPreview || false,
+        originalDocument: signedDocumentData.originalFile,
+        signatureInfo: signedDocumentData.signatureInfo,
+        signatureFields: signedDocumentData.signatureFields,
+        signedAt: signedDocumentData.signedAt
+      }
+
+      // Add the signed document to the list
+      setDocuments((prev) => [...prev, signedDocument])
+
+      // Show different message based on whether it's a preview or actual save
+      if (signedDocumentData.isPreview) {
+        triggerToast(
+          `📝 Document signed! "${signedDocument.name}" preview created. Click download to save to device.`
+        )
+      } else {
+        triggerToast(
+          `🎉 Document signed and saved to device! "${signedDocument.name}" is now available for download.`
+        )
+      }
+
+      // Select the newly signed document
+      setActiveDocumentId(signedDocument.id)
+    }
+
+    closePreviewOverlay()
+  }
+
+  const handleDownloadSuccess = (message, type = 'success') => {
+    if (type === 'success') {
+      triggerToast(`📁 ${message}`)
+    } else {
+      triggerToast(`❌ ${message}`)
+    }
+  }
+
+  const handleDownloadDocument = async (doc) => {
+    try {
+      if (!window.api?.downloadDocument) {
+        alert('Download functionality is not available')
+        return
+      }
+
+      // Check if this is a signed document preview that needs actual signing
+      if (doc.isSigned && doc.isPreview && doc.signatureFields) {
+        console.log('Downloading signed document preview - performing actual signing first')
+
+        // First, actually sign the document
+        const signingResult = await window.api.signDocument({
+          filePath: doc.originalDocument.path, // Use original document path
+          signatureFields: doc.signatureFields
+        })
+
+        if (signingResult && signingResult.success) {
+          // Now download the actually signed document
+          const downloadResult = await window.api.downloadDocument({
+            filePath: signingResult.signedFilePath, // Use the signed file path
+            fileName: doc.name
+          })
+
+          if (downloadResult.success) {
+            triggerToast(
+              `📁 Signed document downloaded successfully to: ${downloadResult.savedPath}`
+            )
+          } else {
+            alert(`Download failed: ${downloadResult.error || 'Unknown error'}`)
+          }
+        } else {
+          alert(`Signing failed: ${signingResult?.error || 'Failed to sign document'}`)
+        }
+      } else {
+        // Regular document download (unsigned or already signed file exists)
+        const result = await window.api.downloadDocument({
+          filePath: doc.path,
+          fileName: doc.name
+        })
+
+        if (result.success) {
+          triggerToast(`📁 Document downloaded successfully to: ${result.savedPath}`)
+        } else {
+          alert(`Download failed: ${result.error || 'Unknown error'}`)
+        }
+      }
+    } catch (error) {
+      console.error('Download failed:', error)
+      alert(`Download failed: ${error.message}`)
     }
   }
 
   return (
     <div className="relative flex h-screen w-full flex-col overflow-hidden bg-slate-950 text-slate-100">
-      <div className="flex h-full w-full flex-col gap-5 px-5 pb-5 pt-5 sm:px-6 lg:gap-7 lg:px-12 xl:px-20 2xl:px-28">
-        <header className="flex flex-none items-center justify-between rounded-3xl border border-slate-800/70 bg-slate-900/70 px-5 py-5 shadow-[0_22px_70px_-40px_rgba(15,23,42,0.9)] sm:px-6 sm:py-6">
-          <div className="flex items-center gap-4">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-800 bg-slate-900">
-              <DocumentIcon className="h-6 w-6 text-indigo-300" />
+      <div className="flex h-full flex-col gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:px-8 lg:py-5">
+          <header className="flex flex-none flex-col gap-0.5 rounded-lg border border-slate-800/70 bg-slate-900/70 px-4 py-2.5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-0 sm:px-5 sm:py-3 lg:px-6 lg:py-3.5">
+          <div className="flex items-center gap-1 sm:gap-2 md:gap-3">
+            <div className="grid h-4 w-4 place-items-center rounded-sm border border-slate-800 bg-slate-900 sm:h-6 sm:w-6 sm:rounded-md md:h-8 md:w-8 md:rounded-lg lg:h-10 lg:w-10 lg:rounded-xl">
+              <DocumentIcon className="h-2 w-2 text-indigo-300 sm:h-3 sm:w-3 md:h-4 md:w-4 lg:h-5 lg:w-5" />
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
+            <div className="min-w-0 flex-1">
+              <p className="hidden sm:block text-xs font-bold uppercase tracking-[0.3em] text-slate-500 md:text-sm">
                 Workspace
               </p>
-              <h1 className="mt-1 text-3xl font-semibold tracking-tight">WinSign Dashboard</h1>
-              <p className="mt-1 text-sm text-slate-400">
+              <h1 className="truncate text-lg font-bold tracking-tight sm:text-xl md:text-2xl lg:text-3xl xl:text-4xl">
+                WinSign Dashboard
+              </h1>
+              <p className="hidden md:block truncate text-sm text-slate-400 lg:text-base">
                 Manage your digital signatures with clarity.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-300 md:flex">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Online
+          <div className="flex items-center gap-0.5 sm:gap-1 md:gap-2">
+            <div className="hidden items-center gap-1 rounded-sm border border-slate-800 bg-slate-900/70 px-1 py-0.5 text-[7px] text-slate-300 lg:flex lg:rounded-md lg:px-2 lg:py-1 lg:text-xs">
+              <span className="h-0.5 w-0.5 rounded-full bg-emerald-400 lg:h-1.5 lg:w-1.5" />
+              <span className="hidden xl:inline">Online</span>
             </div>
-            <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-semibold text-white">
+            <div className="grid h-4 w-4 place-items-center rounded-sm bg-gradient-to-br from-indigo-500 to-violet-500 text-[8px] font-semibold text-white sm:h-5 sm:w-5 sm:rounded-md md:h-6 md:w-6 md:text-[10px] lg:h-8 lg:w-8 lg:rounded-lg lg:text-xs">
               U
             </div>
           </div>
         </header>
-        <main className="flex flex-1 flex-col gap-5 overflow-hidden lg:gap-6">
-          <section className="flex flex-col gap-6 rounded-3xl border border-slate-800/70 bg-slate-900/70 px-6 py-6 shadow-[0_20px_65px_-38px_rgba(15,23,42,0.9)] sm:px-7 sm:py-7">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex items-start gap-4">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-800 bg-slate-900">
-                  <CloudArrowUpIcon className="h-6 w-6 text-indigo-300" />
+        <main className="flex flex-1 flex-col gap-3 overflow-hidden sm:gap-4">
+          <section className="flex flex-none flex-col gap-3 rounded-lg border border-slate-800/70 bg-slate-900/70 px-4 py-4 shadow-sm sm:px-5 sm:py-5 lg:px-6 lg:py-6">
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-2">
+              <div className="flex items-start gap-0.5 sm:gap-2 md:gap-3">
+                <div className="grid h-4 w-4 place-items-center rounded-sm border border-slate-800 bg-slate-900 sm:h-5 sm:w-5 sm:rounded-md md:h-6 md:w-6 md:rounded-lg lg:h-8 lg:w-8 lg:rounded-xl">
+                  <CloudArrowUpIcon className="h-2 w-2 text-indigo-300 sm:h-2.5 sm:w-2.5 md:h-3 md:w-3 lg:h-4 lg:w-4" />
                 </div>
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+                <div className="min-w-0 flex-1">
+                  <p className="hidden text-xs font-bold uppercase tracking-[0.3em] text-slate-500 sm:block md:text-sm">
                     Upload center
                   </p>
-                  <h2 className="mt-1.5 text-xl font-semibold tracking-tight">Upload a document</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                  <h2 className="text-lg font-bold tracking-tight sm:text-xl md:text-2xl lg:text-3xl">
+                    Upload a document
+                  </h2>
+                  <p className="hidden md:block text-xs leading-relaxed text-slate-400 lg:text-sm">
                     Choose where to import from or drop files right here.
                   </p>
                 </div>
               </div>
-              <div className="hidden shrink-0 items-center gap-2 rounded-2xl border border-indigo-400/40 bg-indigo-500/10 px-4 py-2 text-xs font-medium text-indigo-200 sm:flex">
+              <div className="hidden lg:flex shrink-0 items-center gap-1 rounded-lg border border-indigo-400/40 bg-indigo-500/10 px-[clamp(0.5rem,1vw,0.75rem)] py-[clamp(0.25rem,0.5vh,0.375rem)] text-[clamp(0.5rem,1.5vw,0.75rem)] font-medium text-indigo-200">
                 Drag-and-drop enabled
               </div>
             </div>
-            <div className="flex flex-col gap-6 lg:flex-row">
-              <div className="flex-1">
-                <div
-                  ref={uploadTileRef}
-                  className={`relative flex min-h-[220px] w-full cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed px-8 py-8 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 ${
-                    isDragActive
-                      ? 'border-indigo-400/80 bg-indigo-500/10'
-                      : 'border-slate-800/80 bg-slate-950/60 hover:border-indigo-400/60 hover:bg-slate-900'
-                  }`}
-                  onClick={toggleSourceMenu}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDropUpload}
-                  onKeyDown={handleDropZoneKeyDown}
-                  role="button"
-                  tabIndex={0}
-                  aria-haspopup="menu"
-                  aria-expanded={isSourceMenuOpen}
-                  aria-label="Upload a document"
-                >
-                  <div className="grid h-12 w-12 place-items-center rounded-xl border border-slate-800 bg-slate-900">
+            <div className="flex justify-center">
+              <div className="w-full max-w-3xl">
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 md:gap-6">
+                  <div
+                    ref={uploadTileRef}
+                    className={`relative flex h-32 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border px-3 py-3 text-center transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:h-36 sm:px-4 sm:py-4 hover:scale-[1.02] hover:shadow-lg hover:shadow-indigo-500/10 ${
+                      isDragActive
+                        ? 'border-indigo-400 bg-indigo-500/10'
+                        : 'border-slate-700 bg-slate-800/50'
+                    }`}
+                    onClick={() => {
+                      toggleSourceMenu()
+                    }}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDropUpload}
+                    onKeyDown={handleDropZoneKeyDown}
+                    role="button"
+                    tabIndex={0}
+                    aria-haspopup="menu"
+                    aria-expanded={isSourceMenuOpen}
+                    aria-label="Upload a document"
+                  >
                     <CloudArrowUpIcon
-                      className={`h-6 w-6 transition-colors ${
+                      className={`h-6 w-6 transition-all duration-200 sm:h-7 sm:w-7 ${
                         isDragActive
-                          ? 'text-indigo-300'
-                          : 'text-slate-500 group-hover:text-indigo-300'
+                          ? 'text-indigo-200 scale-110'
+                          : 'text-indigo-400 group-hover:text-indigo-300'
                       }`}
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-slate-100">
-                      {isDragActive
-                        ? 'Release to upload your files'
-                        : 'Drop files or click to choose'}
-                    </p>
-                    <p className="text-xs text-slate-400">Supports PDF, DOCX, and TXT formats.</p>
-                  </div>
-                  <div className="inline-flex items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-900/70 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300 transition group-hover:border-indigo-400/60 group-hover:bg-indigo-500/10">
-                    Choose source
-                    <ChevronDownIcon
-                      className={`h-4 w-4 transition-transform ${
-                        isSourceMenuOpen ? 'rotate-180 text-indigo-300' : 'text-slate-500'
-                      }`}
-                    />
-                  </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-slate-50 sm:text-sm">
+                        {isDragActive ? 'Release to upload' : 'Drop files or click'}
+                      </p>
+                      <p className="text-xs font-medium text-slate-300">PDF, DOCX, TXT</p>
+                    </div>
+                    <div className="inline-flex items-center gap-1 rounded-md border border-indigo-400/70 bg-gradient-to-r from-indigo-500/15 to-purple-500/15 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-indigo-200 transition-all duration-200 hover:border-indigo-300 hover:from-indigo-500/25 hover:to-purple-500/25 hover:text-white sm:px-2.5 sm:py-1">
+                      <span className="hidden sm:inline">Click to Upload</span>
+                      <span className="sm:hidden">Upload</span>
+                      <ChevronDownIcon
+                        className={`h-2.5 w-2.5 transition-all duration-200 ${
+                          isSourceMenuOpen 
+                            ? 'rotate-180 text-indigo-100' 
+                            : 'text-indigo-200'
+                        }`}
+                      />
+                    </div>
                   {isSourceMenuOpen && (
                     <div
-                      className="absolute left-1/2 top-full z-10 mt-4 w-full max-w-xs -translate-x-1/2 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/95 text-left shadow-xl shadow-indigo-500/10"
+                      className="absolute left-1/2 top-full z-10 mt-2 w-full max-w-xs -translate-x-1/2 overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/95 text-left shadow-xl shadow-indigo-500/10 sm:mt-4 sm:rounded-2xl"
                       role="menu"
                     >
                       <button
                         type="button"
                         onClick={handleSourceSelection(handleUpload)}
-                        className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-slate-100 transition hover:bg-indigo-500/10"
+                        className="flex w-full items-center gap-1.5 px-2 py-2 text-[10px] font-medium text-slate-100 transition hover:bg-indigo-500/10 sm:gap-3 sm:px-4 sm:py-3 sm:text-sm"
                         role="menuitem"
                       >
-                        <FolderOpenIcon className="h-5 w-5 text-indigo-300" />
+                        <FolderOpenIcon className="h-3 w-3 text-indigo-300 sm:h-5 sm:w-5" />
                         Upload from device
                       </button>
                       <button
                         type="button"
                         onClick={handleSourceSelection(handleOpenDocument)}
-                        className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-slate-100 transition hover:bg-indigo-500/10"
+                        className="flex w-full items-center gap-1.5 px-2 py-2 text-[10px] font-medium text-slate-100 transition hover:bg-indigo-500/10 sm:gap-3 sm:px-4 sm:py-3 sm:text-sm"
                         role="menuitem"
                       >
-                        <DocumentIcon className="h-5 w-5 text-indigo-300" />
+                        <DocumentIcon className="h-3 w-3 text-indigo-300 sm:h-5 sm:w-5" />
                         Browse recent files
                       </button>
                       <button
                         type="button"
                         onClick={handleSourceSelection(handleImportFromCloud)}
-                        className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-slate-100 transition hover:bg-indigo-500/10"
+                        className="flex w-full items-center gap-1.5 px-2 py-2 text-[10px] font-medium text-slate-100 transition hover:bg-indigo-500/10 sm:gap-3 sm:px-4 sm:py-3 sm:text-sm"
                         role="menuitem"
                         title="Connect to cloud storage providers (coming soon)"
                       >
-                        <CloudArrowUpIcon className="h-5 w-5 text-indigo-300" />
+                        <CloudArrowUpIcon className="h-3 w-3 text-indigo-300 sm:h-5 sm:w-5" />
                         Import from cloud
                       </button>
                     </div>
                   )}
-                </div>
-              </div>
-              <div className="flex-1 rounded-2xl border border-slate-800/70 bg-slate-950/70 px-6 py-5 shadow-inner shadow-black/20">
-                {selectedDocument ? (
-                  <div className="flex h-full flex-col justify-between gap-4">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                          Selected document
-                        </p>
-                        <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-100">
-                          {selectedDocument.name}
-                        </h3>
+                  </div>
+                  <div className="flex-1">
+                <div className="relative flex h-32 w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-3 transition-all duration-200 hover:border-slate-600 hover:bg-slate-800/60 sm:h-36 sm:px-4 sm:py-4 overflow-hidden">
+                  {selectedDocument ? (
+                    <div className="flex h-full w-full flex-col justify-between gap-2 sm:gap-2.5">
+                      <div className="flex flex-col gap-1 min-h-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold uppercase tracking-[0.3em] text-slate-400 sm:text-sm">
+                            Selected document
+                          </p>
+                          <h3 className="mt-0.5 truncate text-sm font-bold tracking-tight text-slate-50 sm:text-base md:text-lg">
+                            {selectedDocument.name}
+                          </h3>
+                        </div>
+                        <div className="hidden md:flex flex-wrap items-center gap-1 text-xs text-slate-400 md:gap-1.5">
+                          <span className="rounded-md bg-slate-900 px-1.5 py-0.5 font-medium text-slate-200 text-xs">
+                            {selectedDocument.extension
+                              ? selectedDocument.extension.toUpperCase()
+                              : 'Unknown'}
+                          </span>
+                          <span className="rounded-md bg-slate-900 px-1.5 py-0.5 font-medium text-slate-200 text-xs">
+                            {selectedDocument.sizeLabel}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
                         <button
                           type="button"
                           onClick={handlePreviewClick}
-                          className="inline-flex items-center gap-2 rounded-xl border border-indigo-400/60 px-4 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/10"
+                          className="inline-flex items-center gap-1 rounded-lg border border-indigo-400/70 bg-indigo-500/10 px-2 py-1.5 text-xs font-bold text-indigo-100 transition-all duration-200 hover:border-indigo-300 hover:bg-indigo-500/20 hover:text-white sm:px-3 sm:py-2 sm:text-sm"
                         >
-                          <EyeIcon className="h-4 w-4" />
-                          Preview
+                          <EyeIcon className="h-3 w-3 sm:h-4 sm:w-4" />
+                          <span className="hidden sm:inline">Preview</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={handleSignClick}
-                          className="inline-flex items-center gap-2 rounded-xl border border-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/80"
-                        >
-                          <PencilSquareIcon className="h-4 w-4" />
-                          Sign
-                        </button>
+                        {selectedDocument.isSigned ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadDocument(selectedDocument)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 px-2 py-1.5 text-xs font-bold text-white shadow-lg transition-all duration-200 hover:from-green-400 hover:to-emerald-400 hover:shadow-xl hover:shadow-green-500/20 sm:px-3 sm:py-2 sm:text-sm"
+                          >
+                            <svg
+                              className="w-3 h-3 sm:w-4 sm:h-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                              />
+                            </svg>
+                            <span className="hidden sm:inline">Download</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleSignClick}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-600 bg-slate-700/50 px-2 py-1.5 text-xs font-bold text-slate-200 transition-all duration-200 hover:border-slate-500 hover:bg-slate-600/50 hover:text-white sm:px-3 sm:py-2 sm:text-sm"
+                          >
+                            <PencilSquareIcon className="h-3 w-3 sm:h-4 sm:w-4" />
+                            <span className="hidden sm:inline">Sign</span>
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-slate-200">
-                        {selectedDocument.extension
-                          ? selectedDocument.extension.toUpperCase()
-                          : 'Unknown'}
-                      </span>
-                      <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-slate-200">
-                        {selectedDocument.sizeLabel}
-                      </span>
-                      {selectedDocument.lastModifiedLabel ? (
-                        <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-slate-200">
-                          Updated {selectedDocument.lastModifiedLabel}
-                        </span>
-                      ) : null}
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-3 py-3 sm:gap-6 sm:px-4 sm:py-4">
+                      <div className="flex flex-col items-center gap-3 text-center">
+                        <div className="grid h-12 w-12 place-items-center rounded-lg border border-slate-600/50 bg-gradient-to-br from-slate-700/50 to-slate-800/50 sm:h-16 sm:w-16">
+                          <DocumentIcon className="h-6 w-6 text-slate-400 sm:h-8 sm:w-8" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-[0.3em] text-slate-400 sm:text-sm">
+                            Ready to Start
+                          </p>
+                          <h3 className="text-xs font-bold tracking-tight text-slate-50 sm:text-sm">
+                            Upload & Sign Documents
+                          </h3>
+                        </div>
+                      </div>
                     </div>
-                    <p className="truncate text-xs text-slate-500" title={selectedDocument.path}>
-                      {selectedDocument.path}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 px-4 py-6 text-center text-sm text-slate-400">
-                    <p>No document selected yet.</p>
-                    <p className="text-xs text-slate-500">
-                      Upload a file or choose one from recent activity to access preview and
-                      signing.
-                    </p>
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
+                </div>
               </div>
             </div>
           </section>
-          <section className="flex flex-1 flex-col gap-5 rounded-3xl border border-slate-800/70 bg-slate-900/70 px-6 py-6 shadow-[0_18px_60px_-32px_rgba(15,23,42,0.9)] sm:px-8 sm:py-8">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                  Documents
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight">Recent activity</h2>
-              </div>
-              {documents.length === 0 ? (
-                <p className="text-xs text-slate-500">
-                  Upload a file above to populate your recent activity.
-                </p>
-              ) : (
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2 text-xs text-slate-400">
-                    <span className="rounded-full bg-slate-900 px-3 py-1 font-medium text-indigo-300">
-                      {documents.length} files
+          {signedDocuments.length > 0 && (
+            <section className="flex flex-1 flex-col gap-3 overflow-hidden rounded-lg border border-green-800/50 bg-green-900/15 px-4 py-4 shadow-lg shadow-green-500/10 sm:px-5 sm:py-5 lg:px-6 lg:py-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-green-400 sm:text-sm">
+                    Signed Documents
+                  </p>
+                  <h2 className="mt-1 text-sm font-bold tracking-tight text-slate-50 sm:text-base md:text-lg lg:text-xl">
+                    Ready for download
+                  </h2>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  <div className="flex items-center gap-2 text-xs text-slate-300 sm:gap-3 sm:text-sm">
+                    <span className="rounded-lg bg-green-500/20 px-3 py-1.5 font-bold text-green-200 shadow-sm border border-green-500/30 sm:px-4 sm:py-2">
+                      {signedDocuments.length} signed
                     </span>
-                    {selectedDocument?.lastModifiedLabel ? (
-                      <span>Updated {selectedDocument.lastModifiedLabel}</span>
-                    ) : (
-                      <span>Updated recently</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleUpload}
-                    className="inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-400"
-                  >
-                    <PlusIcon className="h-4 w-4" />
-                    Add more
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="flex flex-1 flex-col rounded-2xl border border-slate-800/60 bg-slate-950/50 px-4 py-5">
-              {documents.length === 0 ? (
-                <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-                  <div className="grid h-14 w-14 place-items-center rounded-xl border border-slate-800 bg-slate-900">
-                    <DocumentIcon className="h-7 w-7 text-slate-500" />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-slate-500">
-                      No documents
-                    </p>
-                    <h3 className="mt-2 text-base font-medium text-slate-200">
-                      Upload your first document to get started
-                    </h3>
+                    <span className="hidden lg:inline rounded-lg bg-slate-700/50 px-3 py-1.5 font-bold text-slate-200 shadow-sm border border-slate-600/50">Ready for use</span>
                   </div>
                 </div>
-              ) : (
-                <ul className="grid flex-1 grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                  {documents.map((doc) => {
+              </div>
+              <div className="flex flex-1 flex-col rounded-xl border border-green-800/30 bg-slate-900/30 px-4 py-5 sm:px-5 sm:py-6">
+                <ul className="grid flex-1 auto-rows-fr grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 sm:gap-4 xl:grid-cols-3 2xl:grid-cols-4">
+                  {signedDocuments.map((doc) => {
                     const isActive = selectedDocument?.id === doc.id
                     return (
-                      <li key={doc.id}>
+                      <li key={doc.id} className="h-full">
                         <button
                           type="button"
                           onClick={() => handleThumbnailClick(doc)}
-                          className={`flex w-full flex-col gap-3 rounded-2xl border px-4 py-4 text-left transition ${
+                          className={`flex h-full w-full flex-col gap-3 rounded-lg border px-4 py-4 text-left transition-all duration-200 hover:scale-[1.02] hover:shadow-lg sm:gap-4 sm:px-5 sm:py-5 ${
                             isActive
-                              ? 'border-indigo-400/60 bg-indigo-500/10 shadow-[0_0_0_1px_rgba(99,102,241,0.35)]'
-                              : 'border-slate-800 bg-slate-900/60 hover:border-indigo-400/50 hover:bg-slate-900'
+                              ? 'border-green-400/70 bg-green-500/15 shadow-lg shadow-green-500/20'
+                              : 'border-green-800/40 bg-green-900/15 hover:border-green-400/50 hover:bg-green-900/25 hover:shadow-green-500/10'
                           }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="grid h-10 w-10 place-items-center rounded-xl border border-slate-800 bg-slate-900">
+                          <div className="flex items-center gap-3 sm:gap-4">
+                            <div className="grid h-10 w-10 place-items-center rounded-lg border border-green-700/50 bg-green-800/30 transition-all duration-200 group-hover:border-green-600 group-hover:bg-green-700/40 sm:h-12 sm:w-12">
                               {getFileIcon(doc.extension)}
                             </div>
                             <div className="flex-1 overflow-hidden">
-                              <p className="truncate text-sm font-semibold text-slate-100">
-                                {doc.name}
-                              </p>
-                              <p className="text-[11px] text-slate-500">{doc.sizeLabel}</p>
+                              <div className="flex items-center gap-2 sm:gap-3">
+                                <p className="truncate text-sm font-bold text-slate-50 sm:text-base">
+                                  {doc.name}
+                                </p>
+                                <span className="inline-flex items-center rounded-md bg-green-500/20 px-2 py-1 text-xs font-bold text-green-200 ring-1 ring-green-500/40 sm:px-3 sm:text-sm">
+                                  ✓
+                                </span>
+                              </div>
+                              <div className="mt-1 space-y-1">
+                                <p className="text-xs font-medium text-green-300 sm:text-sm">
+                                  {doc.sizeLabel}
+                                </p>
+                                {doc.signedAt && (
+                                  <p className="text-xs text-green-400 sm:text-sm">
+                                    Signed {formatTimestamp(doc.signedAt)}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  openPreviewOverlay(doc)
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-green-600/60 bg-green-500/10 px-3 py-1.5 text-xs font-bold text-green-200 transition-all duration-200 hover:border-green-500 hover:bg-green-500/20 hover:text-white sm:px-4 sm:py-2 sm:text-sm"
+                                title="Preview signed document"
+                              >
+                                <EyeIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                                Preview
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleEditSignClick(doc)
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-orange-600/60 bg-orange-500/10 px-3 py-1.5 text-xs font-bold text-orange-200 transition-all duration-200 hover:border-orange-500 hover:bg-orange-500/20 hover:text-white sm:px-4 sm:py-2 sm:text-sm"
+                                title="Edit signatures"
+                              >
+                                <PencilSquareIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleDownloadDocument(doc)
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 px-4 py-1.5 text-xs font-bold text-white shadow-lg transition-all duration-200 hover:from-green-400 hover:to-emerald-400 hover:shadow-xl hover:shadow-green-500/30 sm:px-5 sm:py-2 sm:text-sm"
+                                title="Download signed document"
+                              >
+                                <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                Download
+                              </button>
                             </div>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                            {doc.lastModifiedLabel ? (
-                              <span>Updated {doc.lastModifiedLabel}</span>
-                            ) : null}
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-green-400 sm:gap-2 sm:text-[11px]">
+                            {doc.signatureFields && (
+                              <span>{doc.signatureFields.length} signature(s)</span>
+                            )}
+                            {doc.signatureInfo?.signedBy && (
+                              <span className="hidden sm:inline">
+                                By {doc.signatureInfo.signedBy}
+                              </span>
+                            )}
                             <span className="truncate" title={doc.path}>
                               {doc.path}
                             </span>
@@ -595,59 +801,49 @@ function Dashboard() {
                     )
                   })}
                 </ul>
-              )}
-            </div>
-          </section>
-          <section className="hidden grid-cols-1 gap-4 md:grid lg:grid-cols-3">
-            <div className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+              </div>
+            </section>
+          )}
+          <section className="hidden 2xl:grid h-[clamp(40px,4vh,50px)] grid-cols-3 gap-2">
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/70 p-2 lg:p-3">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.35em] text-slate-500 lg:text-[10px]">
                 Total documents
               </p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-100">
+              <p className="mt-1 text-base font-semibold tracking-tight text-slate-100 lg:mt-1.5 lg:text-lg">
                 {documents.length}
               </p>
             </div>
-            <div className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/70 p-2 lg:p-3">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.35em] text-slate-500 lg:text-[10px]">
                 Signed today
               </p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-100">0</p>
+              <p className="mt-1 text-base font-semibold tracking-tight text-slate-100 lg:mt-1.5 lg:text-lg">
+                {signedDocuments.length}
+              </p>
             </div>
-            <div className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+            <div className="rounded-xl border border-slate-800/60 bg-slate-900/70 p-2 lg:p-3">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.35em] text-slate-500 lg:text-[10px]">
                 Pending signatures
               </p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-100">0</p>
-            </div>
-          </section>
-          <section className="mt-auto grid grid-cols-3 gap-3 rounded-3xl border border-slate-800/60 bg-slate-900/70 px-4 py-4 text-center text-xs font-medium text-slate-300 md:hidden">
-            <div>
-              <p className="uppercase tracking-[0.25em] text-[10px] text-slate-500">Docs</p>
-              <p className="mt-1 text-lg font-semibold text-slate-100">{documents.length}</p>
-            </div>
-            <div>
-              <p className="uppercase tracking-[0.25em] text-[10px] text-slate-500">Signed</p>
-              <p className="mt-1 text-lg font-semibold text-slate-100">0</p>
-            </div>
-            <div>
-              <p className="uppercase tracking-[0.25em] text-[10px] text-slate-500">Pending</p>
-              <p className="mt-1 text-lg font-semibold text-slate-100">0</p>
+              <p className="mt-1 text-base font-semibold tracking-tight text-slate-100 lg:mt-1.5 lg:text-lg">
+                0
+              </p>
             </div>
           </section>
         </main>
       </div>
       {toast && (
-        <div className="pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4">
-          <div className="pointer-events-auto flex items-start gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/95 px-5 py-4 shadow-[0_20px_60px_-35px_rgba(99,102,241,0.5)]">
+        <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-3 sm:top-6 sm:px-4">
+          <div className="pointer-events-auto flex items-start gap-2.5 rounded-2xl border border-slate-800/80 bg-slate-950/95 px-4 py-3 shadow-[0_20px_60px_-35px_rgba(99,102,241,0.5)] sm:gap-3 sm:px-5 sm:py-4">
             <div>
-              <p className="text-sm font-semibold text-slate-100">{toast.message}</p>
+              <p className="text-xs font-semibold text-slate-100 sm:text-sm">{toast.message}</p>
             </div>
             <button
               type="button"
               onClick={dismissToast}
-              className="mt-0.5 rounded-full border border-slate-800/70 p-1 text-slate-400 transition hover:border-slate-700 hover:text-slate-200"
+              className="mt-0.5 rounded-full border border-slate-800/70 p-0.5 text-slate-400 transition hover:border-slate-700 hover:text-slate-200 sm:p-1"
             >
-              <XMarkIcon className="h-4 w-4" />
+              <XMarkIcon className="h-3 w-3 sm:h-4 sm:w-4" />
               <span className="sr-only">Dismiss notification</span>
             </button>
           </div>
@@ -660,7 +856,7 @@ function Dashboard() {
           onClick={closePreviewOverlay}
         >
           <div
-            className="flex min-h-full items-center justify-center px-4 py-12 sm:px-6"
+            className="flex min-h-full items-center justify-center px-3 py-8 sm:px-6 sm:py-12"
             onClick={(event) => event.stopPropagation()}
           >
             <div
@@ -668,7 +864,22 @@ function Dashboard() {
               role="dialog"
               aria-modal="true"
             >
-              <PdfPreview file={overlayDocument} onClose={closePreviewOverlay} />
+              {isSigningMode ? (
+                <SignatureEditor
+                  file={overlayDocument}
+                  onClose={closePreviewOverlay}
+                  onSaveSignedDocument={handleSaveSignedDocument}
+                  onDownloadSuccess={handleDownloadSuccess}
+                  existingSignatureFields={overlayDocument?.signatureFields || []}
+                  isEditing={overlayDocument?.isSigned || false}
+                />
+              ) : (
+                <PdfPreview
+                  file={overlayDocument}
+                  onClose={closePreviewOverlay}
+                  signatureFields={overlayDocument?.signatureFields || []}
+                />
+              )}
             </div>
           </div>
         </div>
